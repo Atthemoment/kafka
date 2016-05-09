@@ -22,8 +22,10 @@ import kafka.utils.Logging
 
 
 class KafkaServerStartable(val serverConfig: KafkaConfig) extends Logging {
+  //集群的一个节点，broker
   private val server = new KafkaServer(serverConfig)
 
+  //启动
   def startup() {
     try {
       server.startup()
@@ -36,7 +38,7 @@ class KafkaServerStartable(val serverConfig: KafkaConfig) extends Logging {
         System.exit(1)
     }
   }
-
+  //关闭
   def shutdown() {
     try {
       server.shutdown()
@@ -55,7 +57,7 @@ class KafkaServerStartable(val serverConfig: KafkaConfig) extends Logging {
   def setServerState(newState: Byte) {
     server.brokerState.newState(newState)
   }
-
+  //等待关闭完成
   def awaitShutdown() = 
     server.awaitShutdown
 

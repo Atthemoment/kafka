@@ -34,9 +34,11 @@ object Kafka extends Logging {
       val props = Utils.loadProps(args(0))
       val serverConfig = new KafkaConfig(props)
       KafkaMetricsReporter.startReporters(serverConfig.props)
+      //启动一个broker
       val kafkaServerStartable = new KafkaServerStartable(serverConfig)
 
       // attach shutdown handler to catch control-c
+      //注册关闭
       Runtime.getRuntime().addShutdownHook(new Thread() {
         override def run() = {
           kafkaServerStartable.shutdown

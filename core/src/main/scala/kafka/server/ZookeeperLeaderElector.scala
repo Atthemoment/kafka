@@ -45,7 +45,9 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext,
 
   def startup {
     inLock(controllerContext.controllerLock) {
+      //订阅选举目录
       controllerContext.zkClient.subscribeDataChanges(electionPath, leaderChangeListener)
+      //选举
       elect
     }
   }
@@ -60,28 +62,34 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext,
   def elect: Boolean = {
     val timestamp = SystemTime.milliseconds.toString
     val electString = Json.encode(Map("version" -> 1, "brokerid" -> brokerId, "timestamp" -> timestamp))
-   
+
+// 获取ControllerID
    leaderId = getControllerID 
     /* 
      * We can get here during the initial startup and the handleDeleted ZK callback. Because of the potential race condition, 
      * it's possible that the controller has already been elected when we get here. This check will prevent the following 
      * createEphemeralPath method from getting into an infinite loop if this broker is already the controller.
      */
+//  当前broker为Controller，直接返回
     if(leaderId != -1) {
        debug("Broker %d has been elected as leader, so stopping the election process.".format(leaderId))
        return amILeader
     }
 
     try {
+//    创建临时目录，成功的话成为leader
       createEphemeralPathExpectConflictHandleZKBug(controllerContext.zkClient, electionPath, electString, brokerId,
         (controllerString : String, leaderId : Any) => KafkaController.parseControllerId(controllerString) == leaderId.asInstanceOf[Int],
         controllerContext.zkSessionTimeout)
       info(brokerId + " successfully elected as leader")
       leaderId = brokerId
+      //成为主
       onBecomingLeader()
     } catch {
-      case e: ZkNodeExistsException =>
+
+      case e: ZkNodeExistsException => //目录已存在，创建不成功
         // If someone else has written the path, then
+//      其他broker成为了leader
         leaderId = getControllerID 
 
         if (leaderId != -1)

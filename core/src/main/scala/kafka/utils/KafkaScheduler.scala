@@ -72,7 +72,9 @@ class KafkaScheduler(val threads: Int,
       if(executor != null)
         throw new IllegalStateException("This scheduler has already been started!")
       executor = new ScheduledThreadPoolExecutor(threads)
+      //设置关闭后不能存在任务
       executor.setContinueExistingPeriodicTasksAfterShutdownPolicy(false)
+      //设置关闭后不执行延迟任务
       executor.setExecuteExistingDelayedTasksAfterShutdownPolicy(false)
       executor.setThreadFactory(new ThreadFactory() {
                                   def newThread(runnable: Runnable): Thread = 
@@ -88,7 +90,7 @@ class KafkaScheduler(val threads: Int,
     executor.awaitTermination(1, TimeUnit.DAYS)
     this.executor = null
   }
-
+  //执行任务
   def schedule(name: String, fun: ()=>Unit, delay: Long, period: Long, unit: TimeUnit) = {
     debug("Scheduling task %s with initial delay %d ms and period %d ms."
         .format(name, TimeUnit.MILLISECONDS.convert(delay, unit), TimeUnit.MILLISECONDS.convert(period, unit)))

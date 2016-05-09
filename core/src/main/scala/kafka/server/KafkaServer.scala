@@ -43,19 +43,19 @@ class KafkaServer(val config: KafkaConfig, time: Time = SystemTime) extends Logg
   private var isShuttingDown = new AtomicBoolean(false)
   private var shutdownLatch = new CountDownLatch(1)
   private var startupComplete = new AtomicBoolean(false)
-  val brokerState: BrokerState = new BrokerState
+  val brokerState: BrokerState = new BrokerState          //broker状态
   val correlationId: AtomicInteger = new AtomicInteger(0)
-  var socketServer: SocketServer = null
-  var requestHandlerPool: KafkaRequestHandlerPool = null
-  var logManager: LogManager = null
-  var offsetManager: OffsetManager = null
-  var kafkaHealthcheck: KafkaHealthcheck = null
-  var topicConfigManager: TopicConfigManager = null
-  var replicaManager: ReplicaManager = null
-  var apis: KafkaApis = null
-  var kafkaController: KafkaController = null
-  val kafkaScheduler = new KafkaScheduler(config.backgroundThreads)
-  var zkClient: ZkClient = null
+  var socketServer: SocketServer = null                   //sccket服务
+  var requestHandlerPool: KafkaRequestHandlerPool = null  //处理器池
+  var logManager: LogManager = null                       //消息管理者
+  var offsetManager: OffsetManager = null                 //地址管理者
+  var kafkaHealthcheck: KafkaHealthcheck = null           //健康检查
+  var topicConfigManager: TopicConfigManager = null       //topic配置管理者
+  var replicaManager: ReplicaManager = null               //分区复制管理者
+  var apis: KafkaApis = null                              //api分发器
+  var kafkaController: KafkaController = null             //集群Controller
+  val kafkaScheduler = new KafkaScheduler(config.backgroundThreads)  //定时任务调度器，默认线程数为10
+  var zkClient: ZkClient = null                           //zk客户端
 
   newGauge(
     "BrokerState",
@@ -65,6 +65,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = SystemTime) extends Logg
   )
 
   /**
+    * 分别启动各个组件
    * Start up API for bringing up a single instance of the Kafka server.
    * Instantiates the LogManager, the SocketServer and the request handlers - KafkaRequestHandlers
    */
@@ -107,7 +108,9 @@ class KafkaServer(val config: KafkaConfig, time: Time = SystemTime) extends Logg
     
       /* start processing requests */
       apis = new KafkaApis(socketServer.requestChannel, replicaManager, offsetManager, zkClient, config.brokerId, config, kafkaController)
+
       requestHandlerPool = new KafkaRequestHandlerPool(config.brokerId, socketServer.requestChannel, apis, config.numIoThreads)
+
       brokerState.newState(RunningAsBroker)
    
       Mx4jLoader.maybeLoad()
@@ -135,7 +138,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = SystemTime) extends Logg
         throw e
     }
   }
-
+  //连接zk并创建公共目录
   private def initZk(): ZkClient = {
     info("Connecting to zookeeper on " + config.zkConnect)
 
@@ -155,6 +158,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = SystemTime) extends Logg
     }
 
     val zkClient = new ZkClient(config.zkConnect, config.zkSessionTimeoutMs, config.zkConnectionTimeoutMs, ZKStringSerializer)
+    //创建公共持久目录
     ZkUtils.setupCommonPaths(zkClient)
     zkClient
   }

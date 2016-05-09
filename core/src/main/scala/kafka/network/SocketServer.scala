@@ -50,8 +50,14 @@ class SocketServer(val brokerId: Int,
                    val maxConnectionsPerIpOverrides: Map[String, Int] ) extends Logging with KafkaMetricsGroup {
   this.logIdent = "[Socket Server on Broker " + brokerId + "], "
   private val time = SystemTime
+
+  //处理器组，干活的worker，默认3
   private val processors = new Array[Processor](numProcessorThreads)
+
+  //接收者，接收新连接的boss
   @volatile private var acceptor: Acceptor = null
+
+  //一个通道默认3线程，容量500
   val requestChannel = new RequestChannel(numProcessorThreads, maxQueuedRequests)
 
   /* a meter to track the average free capacity of the network processors */
@@ -61,6 +67,7 @@ class SocketServer(val brokerId: Int,
    * Start the socket server
    */
   def startup() {
+    //连接配额
     val quotas = new ConnectionQuotas(maxConnectionsPerIp, maxConnectionsPerIpOverrides)
     for(i <- 0 until numProcessorThreads) {
       processors(i) = new Processor(i, 
@@ -82,7 +89,7 @@ class SocketServer(val brokerId: Int,
     // register the processor threads for notification of responses
     requestChannel.addResponseListener((id:Int) => processors(id).wakeup())
    
-    // start accepting connections
+    // start accepting connections 启动boss
     this.acceptor = new Acceptor(host, port, processors, sendBufferSize, recvBufferSize, quotas)
     Utils.newThread("kafka-socket-acceptor", acceptor, false).start()
     acceptor.awaitStartup
@@ -202,12 +209,15 @@ private[kafka] class Acceptor(val host: String,
                               val sendBufferSize: Int, 
                               val recvBufferSize: Int,
                               connectionQuotas: ConnectionQuotas) extends AbstractServerThread(connectionQuotas) {
+
+  //开启服务端
   val serverChannel = openServerSocket(host, port)
 
   /**
    * Accept loop that checks for new connection attempts
    */
   def run() {
+    //注册到selector,监听连接事件
     serverChannel.register(selector, SelectionKey.OP_ACCEPT);
     startupComplete()
     var currentProcessor = 0
@@ -222,10 +232,11 @@ private[kafka] class Acceptor(val host: String,
             key = iter.next
             iter.remove()
             if(key.isAcceptable)
+               //建立连接
                accept(key, processors(currentProcessor))
             else
                throw new IllegalStateException("Unrecognized key state for acceptor thread.")
-
+            //轮询worker
             // round robin to the next processor thread
             currentProcessor = (currentProcessor + 1) % processors.length
           } catch {
@@ -250,9 +261,12 @@ private[kafka] class Acceptor(val host: String,
       else
         new InetSocketAddress(host, port)
     val serverChannel = ServerSocketChannel.open()
+    //非阻塞模式
     serverChannel.configureBlocking(false)
+    //接收缓存大小
     serverChannel.socket().setReceiveBufferSize(recvBufferSize)
     try {
+      //绑定地址
       serverChannel.socket.bind(socketAddress)
       info("Awaiting socket connections on %s:%d.".format(socketAddress.getHostName, port))
     } catch {
@@ -270,6 +284,7 @@ private[kafka] class Acceptor(val host: String,
     val socketChannel = serverSocketChannel.accept()
     try {
       connectionQuotas.inc(socketChannel.socket().getInetAddress)
+      //配置socket
       socketChannel.configureBlocking(false)
       socketChannel.socket().setTcpNoDelay(true)
       socketChannel.socket().setSendBufferSize(sendBufferSize)
@@ -313,10 +328,12 @@ private[kafka] class Processor(val id: Int,
     startupComplete()
     while(isRunning) {
       // setup any new connections that have been queued up
+      //建立新连接
       configureNewConnections()
       // register any new responses for writing
       processNewResponses()
       val startSelectTime = SystemTime.nanoseconds
+//      就绪事件
       val ready = selector.select(300)
       currentTimeNanos = SystemTime.nanoseconds
       val idleTime = currentTimeNanos - startSelectTime
@@ -337,14 +354,18 @@ private[kafka] class Processor(val id: Int,
             key = iter.next
             iter.remove()
             if(key.isReadable)
+//            处理读事件，请求
               read(key)
             else if(key.isWritable)
+//            处理写事件，响应
               write(key)
             else if(!key.isValid)
+//           处理关闭事件，关闭连接
               close(key)
             else
               throw new IllegalStateException("Unrecognized key state for processor thread.")
           } catch {
+//            异常，关闭连接
             case e: EOFException => {
               info("Closing socket connection to %s.".format(channelFor(key).socket.getInetAddress))
               close(key)
@@ -358,6 +379,7 @@ private[kafka] class Processor(val id: Int,
           }
         }
       }
+//    关闭空闲连接
       maybeCloseOldestConnection
     }
     debug("Closing selector.")
@@ -374,12 +396,14 @@ private[kafka] class Processor(val id: Int,
     super.close(key)
   }
 
+  //处理新请求
   private def processNewResponses() {
     var curr = requestChannel.receiveResponse(id)
     while(curr != null) {
       val key = curr.request.requestKey.asInstanceOf[SelectionKey]
       try {
         curr.responseAction match {
+//            无操作
           case RequestChannel.NoOpAction => {
             // There is no response to send to the client, we need to read more pipelined requests
             // that are sitting in the server's socket buffer
@@ -388,11 +412,13 @@ private[kafka] class Processor(val id: Int,
             key.interestOps(SelectionKey.OP_READ)
             key.attach(null)
           }
+//            发送
           case RequestChannel.SendAction => {
             trace("Socket server received response to send, registering for write: " + curr)
             key.interestOps(SelectionKey.OP_WRITE)
             key.attach(curr)
           }
+//           关闭
           case RequestChannel.CloseConnectionAction => {
             curr.request.updateRequestMetrics
             trace("Closing socket connection actively according to the response code.")
@@ -426,6 +452,7 @@ private[kafka] class Processor(val id: Int,
     while(newConnections.size() > 0) {
       val channel = newConnections.poll()
       debug("Processor " + id + " listening to new connection from " + channel.socket.getRemoteSocketAddress)
+      //socketChannel注册到selector,监听读事件
       channel.register(selector, SelectionKey.OP_READ)
     }
   }
@@ -447,7 +474,9 @@ private[kafka] class Processor(val id: Int,
     if(read < 0) {
       close(key)
     } else if(receive.complete) {
+//      接收完成一个请求
       val req = RequestChannel.Request(processor = id, requestKey = key, buffer = receive.buffer, startTimeMs = time.milliseconds, remoteAddress = address)
+//      放入请求队列
       requestChannel.sendRequest(req)
       key.attach(null)
       // explicitly reset interest ops to not READ, no need to wake up the selector just yet
@@ -469,6 +498,7 @@ private[kafka] class Processor(val id: Int,
     val responseSend = response.responseSend
     if(responseSend == null)
       throw new IllegalStateException("Registered for write interest but no response attached to key.")
+//    将返回写入socketChannel
     val written = responseSend.writeTo(socketChannel)
     trace(written + " bytes written to " + socketChannel.socket.getRemoteSocketAddress() + " using key " + key)
     if(responseSend.complete) {

@@ -94,6 +94,7 @@ class ReplicaManager(val config: KafkaConfig,
       getLeaderPartitions().count(_.isUnderReplicated)
   }
 
+//开启写高水位标记线程，5s一次
   def startHighWaterMarksCheckPointThread() = {
     if(highWatermarkCheckPointThreadStarted.compareAndSet(false, true))
       scheduler.schedule("highwatermark-checkpoint", checkpointHighWatermarks, period = config.replicaHighWatermarkCheckpointIntervalMs, unit = TimeUnit.MILLISECONDS)
@@ -135,6 +136,7 @@ class ReplicaManager(val config: KafkaConfig,
 
   def startup() {
     // start ISR expiration thread
+//    开启收缩复制同步列表线程，10s一次
     scheduler.schedule("isr-expiration", maybeShrinkIsr, period = config.replicaLagTimeMaxMs, unit = TimeUnit.MILLISECONDS)
   }
 
@@ -188,6 +190,7 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
+//  获取或创建分区
   def getOrCreatePartition(topic: String, partitionId: Int): Partition = {
     var partition = allPartitions.get((topic, partitionId))
     if (partition == null) {
@@ -196,7 +199,7 @@ class ReplicaManager(val config: KafkaConfig,
     }
     partition
   }
-
+  //  获取分区
   def getPartition(topic: String, partitionId: Int): Option[Partition] = {
     val partition = allPartitions.get((topic, partitionId))
     if (partition == null)
@@ -204,7 +207,7 @@ class ReplicaManager(val config: KafkaConfig,
     else
       Some(partition)
   }
-
+  //  获取复制，获取不到抛异常
   def getReplicaOrException(topic: String, partition: Int): Replica = {
     val replicaOpt = getReplica(topic, partition)
     if(replicaOpt.isDefined)
@@ -212,7 +215,7 @@ class ReplicaManager(val config: KafkaConfig,
     else
       throw new ReplicaNotAvailableException("Replica %d is not available for partition [%s,%d]".format(config.brokerId, topic, partition))
   }
-
+//获取本地主复制
   def getLeaderReplicaIfLocal(topic: String, partitionId: Int): Replica =  {
     val partitionOpt = getPartition(topic, partitionId)
     partitionOpt match {
@@ -227,7 +230,7 @@ class ReplicaManager(val config: KafkaConfig,
         }
     }
   }
-
+  //获取复制
   def getReplica(topic: String, partitionId: Int, replicaId: Int = config.brokerId): Option[Replica] =  {
     val partitionOpt = getPartition(topic, partitionId)
     partitionOpt match {
@@ -322,7 +325,7 @@ class ReplicaManager(val config: KafkaConfig,
       }
     }
   }
-
+//  成为主或从
   def becomeLeaderOrFollower(leaderAndISRRequest: LeaderAndIsrRequest,
                              offsetManager: OffsetManager): (collection.Map[(String, Int), Short], Short) = {
     leaderAndISRRequest.partitionStateInfos.foreach { case ((topic, partition), stateInfo) =>
@@ -369,9 +372,10 @@ class ReplicaManager(val config: KafkaConfig,
             responseMap.put((topic, partitionId), ErrorMapping.StaleLeaderEpochCode)
           }
         }
-
+        //成为主复制
         val partitionsTobeLeader = partitionState
           .filter{ case (partition, partitionStateInfo) => partitionStateInfo.leaderIsrAndControllerEpoch.leaderAndIsr.leader == config.brokerId}
+        //成为从复制
         val partitionsToBeFollower = (partitionState -- partitionsTobeLeader.keys)
 
         if (!partitionsTobeLeader.isEmpty)

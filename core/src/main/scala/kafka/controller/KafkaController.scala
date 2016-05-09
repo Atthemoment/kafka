@@ -297,25 +297,38 @@ class KafkaController(val config : KafkaConfig, zkClient: ZkClient, val brokerSt
    * If it encounters any unexpected exception/error while becoming controller, it resigns as the current controller.
    * This ensures another controller election will be triggered and there will always be an actively serving controller
    */
+//  成为了Controller
   def onControllerFailover() {
     if(isRunning) {
       info("Broker %d starting become controller state transition".format(config.brokerId))
       //read controller epoch from zk
+      //读取epoch
       readControllerEpochFromZookeeper()
       // increment the controller epoch
+      //epoch+1
       incrementControllerEpoch(zkClient)
       // before reading source of truth from zookeeper, register the listeners to get broker/topic callbacks
+      //注册分区重排监听器
       registerReassignedPartitionsListener()
+      //注册复制选举监听器
       registerPreferredReplicaElectionListener()
+      //注册分区状态监听器
       partitionStateMachine.registerListeners()
+      //注册复制状态监听器
       replicaStateMachine.registerListeners()
+      //初始化上下文
       initializeControllerContext()
+      //启动复制状态机
       replicaStateMachine.startup()
+      //启动分区状态机
       partitionStateMachine.startup()
       // register the partition change listeners for all existing topics on failover
+      //注册主题监听器
       controllerContext.allTopics.foreach(topic => partitionStateMachine.registerPartitionChangeListener(topic))
       info("Broker %d is ready to serve as the new controller with epoch %d".format(config.brokerId, epoch))
+      //设置当前broker状态为controller
       brokerState.newState(RunningAsController)
+      
       maybeTriggerPartitionReassignment()
       maybeTriggerPreferredReplicaElection()
       /* send partition leadership info to all live brokers */
@@ -647,6 +660,7 @@ class KafkaController(val config : KafkaConfig, zkClient: ZkClient, val brokerSt
       info("Controller starting up");
       registerSessionExpirationListener()
       isRunning = true
+//    controller选举
       controllerElector.startup
       info("Controller startup complete")
     }
